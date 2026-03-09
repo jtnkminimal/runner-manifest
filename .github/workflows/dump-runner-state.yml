@@ -43,8 +43,17 @@ jobs:
           cat /etc/environment
 
           echo ""
-          echo "=== Environment variables (secrets filtered) ==="
-          env | sort | grep -viE 'token|secret|key|password|credential|auth' || true
+          echo "=== Environment variables (allowlist) ==="
+          for var in CI RUNNER_NAME RUNNER_OS RUNNER_ARCH RUNNER_TEMP RUNNER_TOOL_CACHE \
+            GITHUB_ACTIONS GITHUB_ACTOR GITHUB_REF GITHUB_REF_NAME GITHUB_REPOSITORY \
+            GITHUB_EVENT_NAME GITHUB_JOB GITHUB_RUN_ID GITHUB_RUN_NUMBER GITHUB_SHA \
+            GITHUB_WORKSPACE GITHUB_SERVER_URL GITHUB_API_URL \
+            HOME USER SHELL LANG LC_ALL \
+            JAVA_HOME GOROOT GOPATH DOTNET_ROOT ANDROID_HOME ANDROID_SDK_ROOT \
+            NVM_DIR CONDA CHROME_BIN GECKOWEBDRIVER; do
+            val="${!var-}"
+            [ -n "$val" ] && echo "$var=$val"
+          done
 
           echo ""
           echo "=== PATH breakdown ==="
