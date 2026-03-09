@@ -3,6 +3,9 @@ name: Dump GitHub Runner State
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   dump:
     runs-on: ${{ matrix.runner }}
@@ -15,8 +18,14 @@ jobs:
           - ubuntu-22.04
           - ubuntu-24.04-arm
     steps:
-      - name: System info
+      - name: Dump runner state
         run: |
+          exec > manifest.txt 2>&1
+
+          echo "========== RUNNER: ${{ matrix.runner }} =========="
+          echo "========== Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ) =========="
+          echo ""
+
           echo "=== OS ==="
           cat /etc/os-release
           uname -a
@@ -29,57 +38,63 @@ jobs:
           groups runner
           cat /etc/group | grep runner
 
-      - name: /etc/environment (full)
-        run: cat /etc/environment
+          echo ""
+          echo "=== /etc/environment ==="
+          cat /etc/environment
 
-      - name: Environment variables (full)
-        run: env | sort
+          echo ""
+          echo "=== Environment variables ==="
+          env | sort
 
-      - name: PATH breakdown
-        run: echo "$PATH" | tr ':' '\n'
+          echo ""
+          echo "=== PATH breakdown ==="
+          echo "$PATH" | tr ':' '\n'
 
-      - name: Permissions audit
-        run: |
-          echo "=== Key directories ==="
+          echo ""
+          echo "=== Permissions audit ==="
+          echo "--- Key directories ---"
           for d in /home/runner /home/runner/actions-runner /home/runner/work /home/runner/.cargo /home/runner/.cargo/bin /home/runner/.rustup /home/runner/.nvm /home/runner/.dotnet /home/runner/.config /home/runner/.local /home/runner/.local/bin /opt/hostedtoolcache /opt/pipx /opt/pipx_bin /opt/actionarchivecache /usr/local /usr/local/bin /usr/local/lib /usr/local/share /usr/local/.ghcup /usr/share/miniconda /usr/share/swift /usr/local/lib/android /usr/local/lib/android/sdk /imagegeneration; do
             stat -c '%U:%G %a %n' "$d" 2>/dev/null || echo "MISSING $d"
           done
-          echo "=== /etc/sudoers.d/ ==="
+          echo "--- /etc/sudoers.d/ ---"
           sudo ls -la /etc/sudoers.d/
-          echo "=== runner sudoers ==="
+          echo "--- runner sudoers ---"
           sudo cat /etc/sudoers.d/*runner* 2>/dev/null || echo "no runner sudoers"
 
-      - name: Home directory layout
-        run: |
-          echo "=== /home/runner (all, including dotfiles) ==="
+          echo ""
+          echo "=== Home directory layout ==="
+          echo "--- /home/runner (all, including dotfiles) ---"
           ls -la /home/runner/
-          echo "=== /home/runner/.local/bin ==="
+          echo "--- /home/runner/.local/bin ---"
           ls -la /home/runner/.local/bin/ 2>/dev/null || echo "not found"
-          echo "=== /home/runner/.config ==="
+          echo "--- /home/runner/.config ---"
           ls -la /home/runner/.config/ 2>/dev/null || echo "not found"
 
-      - name: /usr/local/bin (complete)
-        run: ls -la /usr/local/bin/
+          echo ""
+          echo "=== /usr/local/bin ==="
+          ls -la /usr/local/bin/
 
-      - name: /usr/local/share contents
-        run: ls -la /usr/local/share/
+          echo ""
+          echo "=== /usr/local/share ==="
+          ls -la /usr/local/share/
 
-      - name: /opt directory
-        run: |
-          echo "=== /opt top-level ==="
+          echo ""
+          echo "=== /opt directory ==="
+          echo "--- /opt top-level ---"
           ls -la /opt/
-          echo "=== /opt/pipx_bin ==="
+          echo "--- /opt/pipx_bin ---"
           ls -la /opt/pipx_bin/ 2>/dev/null || echo "not found"
-          echo "=== /opt/actionarchivecache ==="
+          echo "--- /opt/actionarchivecache ---"
           ls -la /opt/actionarchivecache/ 2>/dev/null || echo "not found"
-          echo "=== /opt/az ==="
+          echo "--- /opt/az ---"
           ls -la /opt/az/ 2>/dev/null || echo "not found"
 
-      - name: Hostedtoolcache (full depth 4)
-        run: find /opt/hostedtoolcache -maxdepth 4 -type d 2>/dev/null | sort
+          echo ""
+          echo "=== Hostedtoolcache (depth 4) ==="
+          find /opt/hostedtoolcache -maxdepth 4 -type d 2>/dev/null | sort
 
-      - name: Tool versions (comprehensive)
-        run: |
+          echo ""
+          echo "=== Tool versions ==="
           echo "--- node ---"
           node --version 2>/dev/null || echo "not found"
           which node 2>/dev/null
@@ -236,90 +251,116 @@ jobs:
           echo "--- homebrew ---"
           brew --version 2>/dev/null | head -1 || echo "not found"
 
-      - name: Rust / Cargo layout
-        run: |
-          echo "=== rustup show ==="
+          echo ""
+          echo "=== Rust / Cargo layout ==="
           rustup show 2>/dev/null || echo "not found"
-          echo "=== cargo bin ==="
+          echo "--- cargo bin ---"
           ls -la ~/.cargo/bin/ 2>/dev/null || echo "not found"
-          echo "=== rustup toolchains ==="
+          echo "--- rustup toolchains ---"
           ls -la ~/.rustup/toolchains/ 2>/dev/null || echo "not found"
 
-      - name: Dotnet layout
-        run: |
-          echo "=== dotnet SDKs ==="
+          echo ""
+          echo "=== Dotnet layout ==="
           dotnet --list-sdks 2>/dev/null || echo "not found"
-          echo "=== dotnet runtimes ==="
+          echo "--- dotnet runtimes ---"
           dotnet --list-runtimes 2>/dev/null || echo "not found"
-          echo "=== dotnet tools ==="
+          echo "--- dotnet tools ---"
           ls ~/.dotnet/tools/ 2>/dev/null || echo "not found"
 
-      - name: Java layout
-        run: |
-          echo "=== /usr/lib/jvm ==="
+          echo ""
+          echo "=== Java layout ==="
+          echo "--- /usr/lib/jvm ---"
           ls -la /usr/lib/jvm/ 2>/dev/null || echo "not found"
-          echo "=== JAVA_HOME ==="
+          echo "--- JAVA_HOME ---"
           echo "$JAVA_HOME"
-          echo "=== alternatives ==="
+          echo "--- alternatives ---"
           update-alternatives --list java 2>/dev/null || echo "not found"
 
-      - name: Android SDK layout
-        run: |
-          echo "=== SDK top-level ==="
+          echo ""
+          echo "=== Android SDK layout ==="
+          echo "--- SDK top-level ---"
           ls /usr/local/lib/android/sdk/ 2>/dev/null || echo "not found"
-          echo "=== NDK versions ==="
+          echo "--- NDK versions ---"
           ls /usr/local/lib/android/sdk/ndk/ 2>/dev/null || echo "not found"
-          echo "=== build-tools ==="
+          echo "--- build-tools ---"
           ls /usr/local/lib/android/sdk/build-tools/ 2>/dev/null || echo "not found"
-          echo "=== platforms ==="
+          echo "--- platforms ---"
           ls /usr/local/lib/android/sdk/platforms/ 2>/dev/null || echo "not found"
-          echo "=== cmdline-tools ==="
+          echo "--- cmdline-tools ---"
           ls /usr/local/lib/android/sdk/cmdline-tools/ 2>/dev/null || echo "not found"
 
-      - name: Haskell / GHCup layout
-        run: |
-          echo "=== ghcup ==="
+          echo ""
+          echo "=== Haskell / GHCup layout ==="
           ghcup --version 2>/dev/null || echo "not found"
-          echo "=== ghc ==="
           ghc --version 2>/dev/null || echo "not found"
-          echo "=== cabal ==="
           cabal --version 2>/dev/null || echo "not found"
-          echo "=== stack ==="
           stack --version 2>/dev/null || echo "not found"
-          echo "=== ghcup dir ==="
+          echo "--- ghcup dir ---"
           ls /usr/local/.ghcup/bin/ 2>/dev/null | head -20 || echo "not found"
 
-      - name: Docker info
-        run: |
+          echo ""
+          echo "=== Docker info ==="
           docker info 2>/dev/null || echo "not found"
-          echo "=== pre-pulled images ==="
+          echo "--- pre-pulled images ---"
           docker images 2>/dev/null || echo "not found"
-          echo "=== docker plugins ==="
+          echo "--- docker plugins ---"
           ls /usr/libexec/docker/cli-plugins/ 2>/dev/null || echo "not found"
-          echo "=== docker config ==="
+          echo "--- docker config ---"
           cat /etc/docker/daemon.json 2>/dev/null || echo "not found"
 
-      - name: Snap packages
-        run: snap list 2>/dev/null || echo "no snap"
+          echo ""
+          echo "=== Snap packages ==="
+          snap list 2>/dev/null || echo "no snap"
 
-      - name: Homebrew packages
-        run: |
+          echo ""
+          echo "=== Homebrew packages ==="
           brew list 2>/dev/null || echo "not found"
 
-      - name: Imagedata file
-        run: |
-          echo "=== /imagegeneration ==="
+          echo ""
+          echo "=== Imagedata ==="
           ls -la /imagegeneration/ 2>/dev/null || echo "dir not found"
           cat /imagegeneration/imagedata.json 2>/dev/null || echo "file not found"
-          echo "=== /imagegeneration/installedSoftware.md ==="
+          echo "--- installedSoftware.md (first 100 lines) ---"
           head -100 /imagegeneration/installedSoftware.md 2>/dev/null || echo "not found"
 
-      - name: Systemd services
-        run: |
-          echo "=== enabled services ==="
+          echo ""
+          echo "=== Systemd services ==="
+          echo "--- enabled ---"
           systemctl list-unit-files --state=enabled --type=service 2>/dev/null | head -30
-          echo "=== running services ==="
+          echo "--- running ---"
           systemctl list-units --type=service --state=running 2>/dev/null | head -30
 
-      - name: Installed apt packages
-        run: dpkg --get-selections | grep -v deinstall | awk '{print $1}' | sort
+          echo ""
+          echo "=== Installed apt packages ==="
+          dpkg --get-selections | grep -v deinstall | awk '{print $1}' | sort
+
+      - name: Upload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifest-${{ matrix.runner }}
+          path: manifest.txt
+
+  release:
+    needs: dump
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all manifests
+        uses: actions/download-artifact@v4
+        with:
+          path: manifests
+
+      - name: Rename files
+        run: |
+          mkdir -p release
+          for dir in manifests/manifest-*/; do
+            runner=$(basename "$dir" | sed 's/^manifest-//')
+            cp "$dir/manifest.txt" "release/${runner}.txt"
+          done
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dump-${{ github.run_number }}
+          name: "Runner Manifest — Run #${{ github.run_number }}"
+          body: "Automated runner state dump from workflow run #${{ github.run_number }}"
+          files: release/*.txt
