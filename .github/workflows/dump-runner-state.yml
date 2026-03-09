@@ -43,8 +43,8 @@ jobs:
           cat /etc/environment
 
           echo ""
-          echo "=== Environment variables ==="
-          env | sort
+          echo "=== Environment variables (secrets filtered) ==="
+          env | sort | grep -viE 'token|secret|key|password|credential|auth' || true
 
           echo ""
           echo "=== PATH breakdown ==="
@@ -58,8 +58,8 @@ jobs:
           done
           echo "--- /etc/sudoers.d/ ---"
           sudo ls -la /etc/sudoers.d/
-          echo "--- runner sudoers ---"
-          sudo cat /etc/sudoers.d/*runner* 2>/dev/null || echo "no runner sudoers"
+          echo "--- runner sudoers (exists?) ---"
+          sudo ls /etc/sudoers.d/*runner* 2>/dev/null || echo "no runner sudoers"
 
           echo ""
           echo "=== Home directory layout ==="
