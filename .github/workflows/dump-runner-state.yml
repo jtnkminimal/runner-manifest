@@ -14,311 +14,398 @@ jobs:
           - ubuntu-24.04
           - ubuntu-22.04
           - ubuntu-24.04-arm
+          - minimal-ubuntu-latest-4x
     steps:
-      - name: System info
+      - name: Full runner manifest
         run: |
-          echo "=== OS ==="
+          set +e
+
+          section() { echo; echo "==============================================================================="; echo "=== $1"; echo "==============================================================================="; }
+
+          # ─── OS & Kernel ───────────────────────────────────────────────────
+          section "OS Release"
           cat /etc/os-release
+
+          section "Kernel"
           uname -a
-          echo "=== Runner user ==="
+
+          section "Kernel command line"
+          cat /proc/cmdline
+
+          section "Kernel modules loaded"
+          lsmod | sort
+
+          section "Kernel modules available"
+          find /lib/modules/$(uname -r)/kernel -name '*.ko*' 2>/dev/null | sed 's|.*/||;s|\.ko.*||' | sort
+
+          section "sysctl (non-default)"
+          sudo sysctl -a 2>/dev/null | sort
+
+          # ─── Hardware / Virtualization ─────────────────────────────────────
+          section "CPU info"
+          lscpu
+
+          section "Memory"
+          free -h
+          cat /proc/meminfo
+
+          section "Block devices"
+          lsblk -f
+
+          section "Disk usage"
+          df -h
+
+          section "Mount points"
+          mount | sort
+
+          section "/etc/fstab"
+          cat /etc/fstab
+
+          section "Virtualization"
+          systemd-detect-virt 2>/dev/null || echo "unknown"
+          cat /sys/class/dmi/id/product_name 2>/dev/null || true
+          cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true
+
+          # ─── Users & Auth ──────────────────────────────────────────────────
+          section "Current user"
           whoami
           id
-          echo "=== All users with UID >= 1000 ==="
-          awk -F: '$3 >= 1000 {print $1, "uid="$3, "gid="$4, "home="$6, "shell="$7}' /etc/passwd
-          echo "=== Groups ==="
-          groups runner
-          cat /etc/group | grep runner
 
-      - name: /etc/environment (full)
-        run: cat /etc/environment
+          section "/etc/passwd (uid >= 900)"
+          awk -F: '$3 >= 900 {print}' /etc/passwd
 
-      - name: Environment variables (full)
-        run: env | sort
+          section "/etc/group (gid >= 900 or interesting)"
+          awk -F: '$3 >= 900 || $1 ~ /docker|sudo|admin|runner/' /etc/group
 
-      - name: PATH breakdown
-        run: echo "$PATH" | tr ':' '\n'
-
-      - name: Permissions audit
-        run: |
-          echo "=== Key directories ==="
-          for d in /home/runner /home/runner/actions-runner /home/runner/work /home/runner/.cargo /home/runner/.cargo/bin /home/runner/.rustup /home/runner/.nvm /home/runner/.dotnet /home/runner/.config /home/runner/.local /home/runner/.local/bin /opt/hostedtoolcache /opt/pipx /opt/pipx_bin /opt/actionarchivecache /usr/local /usr/local/bin /usr/local/lib /usr/local/share /usr/local/.ghcup /usr/share/miniconda /usr/share/swift /usr/local/lib/android /usr/local/lib/android/sdk /imagegeneration; do
-            stat -c '%U:%G %a %n' "$d" 2>/dev/null || echo "MISSING $d"
-          done
-          echo "=== /etc/sudoers.d/ ==="
+          section "sudoers.d"
           sudo ls -la /etc/sudoers.d/
-          echo "=== runner sudoers ==="
-          sudo cat /etc/sudoers.d/*runner* 2>/dev/null || echo "no runner sudoers"
+          for f in /etc/sudoers.d/*; do
+            echo "--- $f ---"
+            sudo cat "$f" 2>/dev/null
+          done
 
-      - name: Home directory layout
-        run: |
-          echo "=== /home/runner (all, including dotfiles) ==="
+          section "/etc/sudoers (non-comment)"
+          sudo grep -v '^#\|^$' /etc/sudoers 2>/dev/null
+
+          # ─── Environment ───────────────────────────────────────────────────
+          section "/etc/environment"
+          cat /etc/environment
+
+          section "Environment variables"
+          env | grep -v 'GITHUB_TOKEN\|ACTIONS_RUNTIME_TOKEN\|ACTIONS_ID_TOKEN' | sort
+
+          section "PATH breakdown"
+          echo "$PATH" | tr ':' '\n'
+
+          section "/etc/profile.d scripts"
+          ls -la /etc/profile.d/
+          for f in /etc/profile.d/*.sh; do
+            echo "--- $f ---"
+            cat "$f"
+          done
+
+          section "Shell rc files"
+          for f in /home/runner/.bashrc /home/runner/.bash_profile /home/runner/.profile /root/.bashrc; do
+            echo "--- $f ---"
+            sudo cat "$f" 2>/dev/null || echo "not found"
+          done
+
+          # ─── Filesystem Layout ─────────────────────────────────────────────
+          section "/ top-level"
+          ls -la /
+
+          section "/home/runner full listing"
           ls -la /home/runner/
-          echo "=== /home/runner/.local/bin ==="
-          ls -la /home/runner/.local/bin/ 2>/dev/null || echo "not found"
-          echo "=== /home/runner/.config ==="
-          ls -la /home/runner/.config/ 2>/dev/null || echo "not found"
+          find /home/runner -maxdepth 2 -not -path '*/actions-runner/_work/*' -not -path '*/.cache/*' | sort
 
-      - name: /usr/local/bin (complete)
-        run: ls -la /usr/local/bin/
+          section "/home/runner dotfiles and configs"
+          for d in .config .local .local/bin .local/share .local/state .cargo .cargo/bin .rustup .nvm .dotnet .dotnet/tools .ghcup .npm .yarn; do
+            echo "--- /home/runner/$d ---"
+            ls -la "/home/runner/$d" 2>/dev/null || echo "not found"
+          done
 
-      - name: /usr/local/share contents
-        run: ls -la /usr/local/share/
+          section "/usr/local full tree (depth 3)"
+          find /usr/local -maxdepth 3 -not -path '*/lib/python*' -not -path '*/lib/node_modules/*' -not -path '*/share/man/*' -not -path '*/share/doc/*' | sort
 
-      - name: /opt directory
-        run: |
-          echo "=== /opt top-level ==="
-          ls -la /opt/
-          echo "=== /opt/pipx_bin ==="
-          ls -la /opt/pipx_bin/ 2>/dev/null || echo "not found"
-          echo "=== /opt/actionarchivecache ==="
-          ls -la /opt/actionarchivecache/ 2>/dev/null || echo "not found"
-          echo "=== /opt/az ==="
-          ls -la /opt/az/ 2>/dev/null || echo "not found"
+          section "/usr/local/bin"
+          ls -la /usr/local/bin/
 
-      - name: Hostedtoolcache (full depth 4)
-        run: find /opt/hostedtoolcache -maxdepth 4 -type d 2>/dev/null | sort
+          section "/opt full tree (depth 3)"
+          find /opt -maxdepth 3 2>/dev/null | sort
 
-      - name: Tool versions (comprehensive)
-        run: |
-          echo "--- node ---"
-          node --version 2>/dev/null || echo "not found"
-          which node 2>/dev/null
-          echo "--- npm ---"
-          npm --version 2>/dev/null || echo "not found"
-          echo "--- yarn ---"
-          yarn --version 2>/dev/null || echo "not found"
-          echo "--- python3 ---"
-          python3 --version 2>/dev/null || echo "not found"
-          which python3 2>/dev/null
-          echo "--- pip ---"
-          pip3 --version 2>/dev/null || echo "not found"
-          echo "--- go ---"
-          go version 2>/dev/null || echo "not found"
-          which go 2>/dev/null
-          echo "--- rustc ---"
-          rustc --version 2>/dev/null || echo "not found"
-          which rustc 2>/dev/null
-          echo "--- cargo ---"
-          cargo --version 2>/dev/null || echo "not found"
-          echo "--- java ---"
-          java --version 2>/dev/null || echo "not found"
-          which java 2>/dev/null
-          echo "--- dotnet ---"
-          dotnet --list-sdks 2>/dev/null || echo "not found"
-          echo "--- docker ---"
-          docker --version 2>/dev/null || echo "not found"
-          echo "--- docker compose ---"
-          docker compose version 2>/dev/null || echo "not found"
-          echo "--- docker buildx ---"
-          docker buildx version 2>/dev/null || echo "not found"
-          echo "--- gcc ---"
-          gcc --version 2>/dev/null | head -1 || echo "not found"
-          echo "--- gcc versions available ---"
-          ls /usr/bin/gcc-* 2>/dev/null || echo "none"
-          echo "--- g++ versions available ---"
-          ls /usr/bin/g++-* 2>/dev/null || echo "none"
-          echo "--- gfortran ---"
-          gfortran --version 2>/dev/null | head -1 || echo "not found"
-          ls /usr/bin/gfortran-* 2>/dev/null || echo "none"
-          echo "--- cmake ---"
-          cmake --version 2>/dev/null | head -1 || echo "not found"
-          which cmake 2>/dev/null
-          echo "--- ninja ---"
-          ninja --version 2>/dev/null || echo "not found"
-          echo "--- gh ---"
-          gh --version 2>/dev/null | head -1 || echo "not found"
-          echo "--- az ---"
-          az version 2>/dev/null || echo "not found"
-          echo "--- aws ---"
-          aws --version 2>/dev/null || echo "not found"
-          echo "--- gcloud ---"
-          gcloud version 2>/dev/null | head -3 || echo "not found"
-          echo "--- kubectl ---"
-          kubectl version --client 2>/dev/null || echo "not found"
-          echo "--- helm ---"
-          helm version --short 2>/dev/null || echo "not found"
-          echo "--- terraform ---"
-          terraform --version 2>/dev/null | head -1 || echo "not found"
-          echo "--- packer ---"
-          packer --version 2>/dev/null || echo "not found"
-          echo "--- ruby ---"
-          ruby --version 2>/dev/null || echo "not found"
-          which ruby 2>/dev/null
-          echo "--- gem ---"
-          gem --version 2>/dev/null || echo "not found"
-          echo "--- bundler ---"
-          bundler --version 2>/dev/null || echo "not found"
-          echo "--- php ---"
-          php --version 2>/dev/null | head -1 || echo "not found"
-          echo "--- composer ---"
-          composer --version 2>/dev/null | head -1 || echo "not found"
-          echo "--- swift ---"
-          swift --version 2>/dev/null | head -1 || echo "not found"
-          echo "--- kotlin ---"
-          kotlin -version 2>/dev/null || echo "not found"
-          echo "--- julia ---"
-          julia --version 2>/dev/null || echo "not found"
-          echo "--- powershell ---"
-          pwsh --version 2>/dev/null || echo "not found"
-          echo "--- bazel ---"
-          bazel --version 2>/dev/null || echo "not found"
-          echo "--- R ---"
-          R --version 2>/dev/null | head -1 || echo "not found"
-          echo "--- clang ---"
-          clang --version 2>/dev/null | head -1 || echo "not found"
-          echo "--- clang versions available ---"
-          ls /usr/bin/clang-?? 2>/dev/null || echo "none"
-          echo "--- lld versions ---"
-          ls /usr/bin/lld-* 2>/dev/null || echo "none"
-          echo "--- lldb ---"
-          ls /usr/bin/lldb-* 2>/dev/null || echo "none"
-          echo "--- chromium/chrome ---"
-          google-chrome --version 2>/dev/null || echo "not found"
-          echo "--- firefox ---"
-          firefox --version 2>/dev/null || echo "not found"
-          echo "--- edge ---"
-          microsoft-edge --version 2>/dev/null || echo "not found"
-          echo "--- selenium ---"
-          ls /usr/share/java/selenium* 2>/dev/null || echo "not found"
-          echo "--- chromedriver ---"
-          chromedriver --version 2>/dev/null || echo "not found"
-          ls /usr/local/share/chromedriver* 2>/dev/null || echo "not found"
-          echo "--- geckodriver ---"
-          geckodriver --version 2>/dev/null | head -1 || echo "not found"
-          echo "--- edgedriver ---"
-          ls /usr/local/share/edge_driver/ 2>/dev/null || echo "not found"
-          echo "--- ant ---"
-          ant -version 2>/dev/null || echo "not found"
-          echo "--- gradle ---"
-          gradle --version 2>/dev/null | head -3 || echo "not found"
-          echo "--- maven ---"
-          mvn --version 2>/dev/null | head -1 || echo "not found"
-          echo "--- sbt ---"
-          sbt --version 2>/dev/null | head -2 || echo "not found"
-          echo "--- miniconda ---"
-          conda --version 2>/dev/null || echo "not found"
-          echo "--- pip global packages ---"
-          pip3 list 2>/dev/null | head -20 || echo "not found"
-          echo "--- pipx list ---"
-          pipx list --short 2>/dev/null || echo "not found"
-          echo "--- nvm ---"
-          bash -c 'source /home/runner/.nvm/nvm.sh && nvm list' 2>/dev/null || echo "not found"
-          echo "--- azcopy ---"
-          azcopy --version 2>/dev/null || echo "not found"
-          echo "--- bicep ---"
-          bicep --version 2>/dev/null || echo "not found"
-          echo "--- yq ---"
-          yq --version 2>/dev/null || echo "not found"
-          echo "--- jq ---"
-          jq --version 2>/dev/null || echo "not found"
-          echo "--- zstd ---"
-          zstd --version 2>/dev/null | head -1 || echo "not found"
-          echo "--- shellcheck ---"
-          shellcheck --version 2>/dev/null | head -2 || echo "not found"
-          echo "--- podman ---"
-          podman --version 2>/dev/null || echo "not found"
-          echo "--- buildah ---"
-          buildah --version 2>/dev/null || echo "not found"
-          echo "--- skopeo ---"
-          skopeo --version 2>/dev/null || echo "not found"
-          echo "--- kind ---"
-          kind --version 2>/dev/null || echo "not found"
-          echo "--- minikube ---"
-          minikube version 2>/dev/null | head -1 || echo "not found"
-          echo "--- kustomize ---"
-          kustomize version 2>/dev/null || echo "not found"
-          echo "--- pulumi ---"
-          pulumi version 2>/dev/null || echo "not found"
-          echo "--- vcpkg ---"
-          vcpkg version 2>/dev/null | head -1 || echo "not found"
-          echo "--- swig ---"
-          swig -version 2>/dev/null | head -3 || echo "not found"
-          echo "--- homebrew ---"
-          brew --version 2>/dev/null | head -1 || echo "not found"
+          section "/opt/hostedtoolcache (depth 4)"
+          find /opt/hostedtoolcache -maxdepth 4 -type d 2>/dev/null | sort
 
-      - name: Rust / Cargo layout
-        run: |
-          echo "=== rustup show ==="
-          rustup show 2>/dev/null || echo "not found"
-          echo "=== cargo bin ==="
+          section "/snap"
+          ls -la /snap/ 2>/dev/null || echo "not found"
+
+          section "/imagegeneration"
+          ls -la /imagegeneration/ 2>/dev/null || echo "not found"
+          cat /imagegeneration/imagedata.json 2>/dev/null || echo "not found"
+          cat /imagegeneration/installedSoftware.md 2>/dev/null || echo "not found"
+
+          # ─── Package Management ────────────────────────────────────────────
+          section "APT sources"
+          cat /etc/apt/sources.list 2>/dev/null || true
+          cat /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          ls -la /etc/apt/sources.list.d/
+
+          section "APT keys"
+          ls -la /etc/apt/keyrings/ 2>/dev/null || true
+          ls -la /etc/apt/trusted.gpg.d/ 2>/dev/null || true
+
+          section "All installed deb packages with versions"
+          dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' | sort
+
+          section "Packages on hold"
+          apt-mark showhold 2>/dev/null
+
+          section "Snap packages"
+          snap list 2>/dev/null || echo "no snap"
+
+          section "Homebrew packages"
+          brew list --versions 2>/dev/null || echo "no brew"
+
+          section "pip3 global packages"
+          pip3 list --format=freeze 2>/dev/null || echo "not found"
+
+          section "pipx packages"
+          pipx list 2>/dev/null || echo "not found"
+
+          section "npm global packages"
+          npm list -g --depth=0 2>/dev/null || echo "not found"
+
+          section "gem list"
+          gem list 2>/dev/null || echo "not found"
+
+          section "cargo installed"
           ls -la ~/.cargo/bin/ 2>/dev/null || echo "not found"
-          echo "=== rustup toolchains ==="
-          ls -la ~/.rustup/toolchains/ 2>/dev/null || echo "not found"
 
-      - name: Dotnet layout
-        run: |
-          echo "=== dotnet SDKs ==="
+          section "go env"
+          go env 2>/dev/null || echo "not found"
+
+          section "dotnet global tools"
+          dotnet tool list -g 2>/dev/null || echo "not found"
+
+          # ─── Tool Versions ─────────────────────────────────────────────────
+          section "Tool versions"
+          for tool in \
+            node npm yarn pnpm corepack \
+            python3 pip3 python \
+            go rustc cargo rustup \
+            java javac \
+            dotnet \
+            docker "docker compose" "docker buildx" \
+            gcc g++ gfortran make cmake ninja-build \
+            clang clang++ lld lldb \
+            gh az aws kubectl helm terraform packer pulumi \
+            ruby gem bundler \
+            php composer \
+            swift kotlin julia pwsh R \
+            bazel ant gradle mvn sbt \
+            conda \
+            git git-lfs curl wget jq yq zstd \
+            shellcheck shfmt \
+            podman buildah skopeo \
+            kind minikube kustomize \
+            azcopy bicep vcpkg \
+            chromium-browser google-chrome firefox microsoft-edge \
+            chromedriver geckodriver \
+            swig m4 autoconf automake libtool pkg-config \
+            openssl ssh zip unzip 7z xz bzip2 \
+            lsb_release dpkg apt snap flatpak \
+            systemctl journalctl \
+            perl sed awk grep find xargs \
+            nft iptables ip ss \
+            gpg gpg-agent \
+            brew; do
+            bin=$(echo "$tool" | awk '{print $1}')
+            path=$(which "$bin" 2>/dev/null)
+            if [ -n "$path" ]; then
+              ver=$($tool --version 2>/dev/null | head -1)
+              [ -z "$ver" ] && ver=$($tool version 2>/dev/null | head -1)
+              [ -z "$ver" ] && ver=$($tool -version 2>/dev/null | head -1)
+              [ -z "$ver" ] && ver=$($tool -V 2>/dev/null | head -1)
+              printf "%-30s %-60s %s\n" "$tool" "$ver" "$path"
+            fi
+          done
+
+          section "GCC versions available"
+          ls /usr/bin/gcc-* /usr/bin/g++-* /usr/bin/gfortran-* 2>/dev/null || echo "none"
+
+          section "Clang versions available"
+          ls /usr/bin/clang-?? /usr/bin/clang++-?? /usr/bin/lld-?? /usr/bin/lldb-?? 2>/dev/null || echo "none"
+
+          section "Python alternatives"
+          update-alternatives --list python 2>/dev/null || echo "none"
+          update-alternatives --list python3 2>/dev/null || echo "none"
+          ls /usr/bin/python* 2>/dev/null
+
+          section "Java alternatives"
+          update-alternatives --list java 2>/dev/null || echo "none"
+          ls /usr/lib/jvm/ 2>/dev/null
+          echo "JAVA_HOME=$JAVA_HOME"
+
+          section "Node via nvm"
+          bash -c 'source /home/runner/.nvm/nvm.sh 2>/dev/null && nvm list' 2>/dev/null || echo "not found"
+
+          # ─── Language Runtimes Detail ──────────────────────────────────────
+          section "Rust detail"
+          rustup show 2>/dev/null || echo "not found"
+          rustup target list --installed 2>/dev/null || echo "not found"
+          rustup component list --installed 2>/dev/null || echo "not found"
+
+          section "Dotnet detail"
           dotnet --list-sdks 2>/dev/null || echo "not found"
-          echo "=== dotnet runtimes ==="
           dotnet --list-runtimes 2>/dev/null || echo "not found"
-          echo "=== dotnet tools ==="
-          ls ~/.dotnet/tools/ 2>/dev/null || echo "not found"
 
-      - name: Java layout
-        run: |
-          echo "=== /usr/lib/jvm ==="
-          ls -la /usr/lib/jvm/ 2>/dev/null || echo "not found"
-          echo "=== JAVA_HOME ==="
-          echo "$JAVA_HOME"
-          echo "=== alternatives ==="
-          update-alternatives --list java 2>/dev/null || echo "not found"
+          section "Java detail"
+          java --version 2>/dev/null || echo "not found"
+          ls -la /usr/lib/jvm/ 2>/dev/null
 
-      - name: Android SDK layout
-        run: |
-          echo "=== SDK top-level ==="
+          section "Android SDK"
           ls /usr/local/lib/android/sdk/ 2>/dev/null || echo "not found"
-          echo "=== NDK versions ==="
-          ls /usr/local/lib/android/sdk/ndk/ 2>/dev/null || echo "not found"
-          echo "=== build-tools ==="
           ls /usr/local/lib/android/sdk/build-tools/ 2>/dev/null || echo "not found"
-          echo "=== platforms ==="
           ls /usr/local/lib/android/sdk/platforms/ 2>/dev/null || echo "not found"
-          echo "=== cmdline-tools ==="
+          ls /usr/local/lib/android/sdk/ndk/ 2>/dev/null || echo "not found"
           ls /usr/local/lib/android/sdk/cmdline-tools/ 2>/dev/null || echo "not found"
+          ls /usr/local/lib/android/sdk/system-images/ 2>/dev/null || echo "not found"
+          cat /usr/local/lib/android/sdk/cmdline-tools/latest/source.properties 2>/dev/null || true
 
-      - name: Haskell / GHCup layout
-        run: |
-          echo "=== ghcup ==="
-          ghcup --version 2>/dev/null || echo "not found"
-          echo "=== ghc ==="
-          ghc --version 2>/dev/null || echo "not found"
-          echo "=== cabal ==="
-          cabal --version 2>/dev/null || echo "not found"
-          echo "=== stack ==="
-          stack --version 2>/dev/null || echo "not found"
-          echo "=== ghcup dir ==="
-          ls /usr/local/.ghcup/bin/ 2>/dev/null | head -20 || echo "not found"
+          section "Haskell/GHCup"
+          ghcup list 2>/dev/null || echo "not found"
 
-      - name: Docker info
-        run: |
+          # ─── Shared Libraries ──────────────────────────────────────────────
+          section "Shared library cache summary"
+          ldconfig -p 2>/dev/null | wc -l
+          ldconfig -p 2>/dev/null | awk -F' => ' '{print $2}' | sed 's|/[^/]*$||' | sort -u
+
+          section "Key shared libraries"
+          ldconfig -p 2>/dev/null | grep -E 'libssl|libcrypto|libcurl|libz\.|libpthread|libstdc|libgcc|libm\.|libc\.' | sort
+
+          section "/etc/ld.so.conf.d"
+          cat /etc/ld.so.conf 2>/dev/null
+          cat /etc/ld.so.conf.d/*.conf 2>/dev/null
+
+          section "pkg-config available packages"
+          pkg-config --list-all 2>/dev/null | sort || echo "not found"
+
+          # ─── Networking ────────────────────────────────────────────────────
+          section "Network interfaces"
+          ip addr show 2>/dev/null
+
+          section "Routing table"
+          ip route show 2>/dev/null
+
+          section "DNS config"
+          cat /etc/resolv.conf
+          cat /etc/hosts
+
+          section "iptables rules"
+          sudo iptables -L -n 2>/dev/null || echo "not found"
+          sudo iptables -t nat -L -n 2>/dev/null || echo "not found"
+
+          section "Listening ports"
+          ss -tlnp 2>/dev/null || echo "not found"
+
+          section "nftables"
+          sudo nft list ruleset 2>/dev/null || echo "not found"
+
+          # ─── Services & Systemd ────────────────────────────────────────────
+          section "Enabled services"
+          systemctl list-unit-files --state=enabled --type=service 2>/dev/null
+
+          section "Running services"
+          systemctl list-units --type=service --state=running 2>/dev/null
+
+          section "Timers"
+          systemctl list-timers --all 2>/dev/null
+
+          section "Failed units"
+          systemctl --failed 2>/dev/null
+
+          # ─── Docker ────────────────────────────────────────────────────────
+          section "Docker info"
           docker info 2>/dev/null || echo "not found"
-          echo "=== pre-pulled images ==="
+
+          section "Docker images"
           docker images 2>/dev/null || echo "not found"
-          echo "=== docker plugins ==="
-          ls /usr/libexec/docker/cli-plugins/ 2>/dev/null || echo "not found"
-          echo "=== docker config ==="
+
+          section "Docker networks"
+          docker network ls 2>/dev/null || echo "not found"
+
+          section "Docker daemon config"
           cat /etc/docker/daemon.json 2>/dev/null || echo "not found"
 
-      - name: Snap packages
-        run: snap list 2>/dev/null || echo "no snap"
+          section "Docker plugins"
+          ls /usr/libexec/docker/cli-plugins/ 2>/dev/null || echo "not found"
 
-      - name: Homebrew packages
-        run: brew list 2>/dev/null || echo "not found"
+          section "containerd config"
+          sudo cat /etc/containerd/config.toml 2>/dev/null || echo "not found"
 
-      - name: Imagedata file
-        run: |
-          echo "=== /imagegeneration ==="
-          ls -la /imagegeneration/ 2>/dev/null || echo "dir not found"
-          cat /imagegeneration/imagedata.json 2>/dev/null || echo "file not found"
-          echo "=== /imagegeneration/installedSoftware.md ==="
-          head -100 /imagegeneration/installedSoftware.md 2>/dev/null || echo "not found"
+          # ─── Security / Capabilities ───────────────────────────────────────
+          section "AppArmor status"
+          sudo aa-status 2>/dev/null || echo "not found"
 
-      - name: Systemd services
-        run: |
-          echo "=== enabled services ==="
-          systemctl list-unit-files --state=enabled --type=service 2>/dev/null | head -30
-          echo "=== running services ==="
-          systemctl list-units --type=service --state=running 2>/dev/null | head -30
+          section "Seccomp"
+          grep -i seccomp /proc/self/status 2>/dev/null
 
-      - name: Installed apt packages
-        run: dpkg --get-selections | grep -v deinstall | awk '{print $1}' | sort
+          section "Capabilities"
+          cat /proc/self/status | grep -i cap
+
+          section "Security limits"
+          ulimit -a
+
+          section "/etc/security/limits.conf"
+          cat /etc/security/limits.conf 2>/dev/null
+          cat /etc/security/limits.d/*.conf 2>/dev/null || true
+
+          # ─── Cron & Scheduled ──────────────────────────────────────────────
+          section "Crontabs"
+          sudo ls -la /etc/cron.d/ 2>/dev/null
+          for f in /etc/cron.d/*; do
+            echo "--- $f ---"
+            sudo cat "$f" 2>/dev/null
+          done
+          crontab -l 2>/dev/null || echo "no user crontab"
+
+          # ─── Misc Config ───────────────────────────────────────────────────
+          section "Locale"
+          locale
+          locale -a 2>/dev/null | head -20
+
+          section "Timezone"
+          timedatectl 2>/dev/null || echo "not found"
+          cat /etc/timezone 2>/dev/null || true
+
+          section "Git config (system)"
+          git config --system --list 2>/dev/null || echo "none"
+
+          section "Git config (global)"
+          git config --global --list 2>/dev/null || echo "none"
+
+          section "SSH config"
+          ls -la /etc/ssh/ 2>/dev/null
+          cat /etc/ssh/sshd_config 2>/dev/null | grep -v '^#\|^$' || echo "not found"
+
+          section "SSL/TLS certificates"
+          ls /etc/ssl/certs/ 2>/dev/null | wc -l
+          ls /usr/local/share/ca-certificates/ 2>/dev/null || echo "none"
+          openssl version 2>/dev/null
+
+          section "/etc/skel"
+          ls -la /etc/skel/ 2>/dev/null
+
+          section "alternatives (all)"
+          update-alternatives --get-selections 2>/dev/null | sort
+
+          section "Tmpfiles / cleanup"
+          ls /etc/tmpfiles.d/ 2>/dev/null || echo "none"
+          ls /usr/lib/tmpfiles.d/ 2>/dev/null || echo "none"
+
+          section "File descriptor limits"
+          cat /proc/sys/fs/file-max
+          cat /proc/sys/fs/inotify/max_user_watches
+
+          echo
+          echo "=== DUMP COMPLETE ==="
