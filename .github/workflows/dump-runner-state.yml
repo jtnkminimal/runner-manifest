@@ -14,7 +14,7 @@ jobs:
           - ubuntu-24.04
           - ubuntu-22.04
           - ubuntu-24.04-arm
-          - minimal-ubuntu-latest-4x
+          - minimal-ubuntu-latest
     steps:
       - name: Full runner manifest
         run: |
