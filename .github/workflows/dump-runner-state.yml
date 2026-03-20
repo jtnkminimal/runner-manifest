@@ -407,5 +407,168 @@ jobs:
           cat /proc/sys/fs/file-max
           cat /proc/sys/fs/inotify/max_user_watches
 
+          # ─── Disk I/O Benchmarks ─────────────────────────────────────────
+          section "Disk write speed (dd 1GB, /home/runner)"
+          dd if=/dev/zero of=/home/runner/_bench_write bs=1M count=1024 conv=fdatasync 2>&1
+          rm -f /home/runner/_bench_write
+
+          section "Disk write speed (dd 1GB, /tmp)"
+          dd if=/dev/zero of=/tmp/_bench_write bs=1M count=1024 conv=fdatasync 2>&1
+          rm -f /tmp/_bench_write
+
+          section "Disk read speed (dd 1GB, cached)"
+          dd if=/dev/zero of=/tmp/_bench_read bs=1M count=1024 conv=fdatasync 2>/dev/null
+          sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
+          dd if=/tmp/_bench_read of=/dev/null bs=1M count=1024 2>&1
+          rm -f /tmp/_bench_read
+
+          section "Disk write speed (dd 256MB, small blocks 4K)"
+          dd if=/dev/zero of=/tmp/_bench_4k bs=4K count=65536 conv=fdatasync 2>&1
+          rm -f /tmp/_bench_4k
+
+          section "Filesystem sync latency (fsync 100 x 4K)"
+          python3 -c "
+          import os, time
+          fd = os.open('/tmp/_bench_fsync', os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+          data = b'\x00' * 4096
+          times = []
+          for _ in range(100):
+              s = time.monotonic()
+              os.write(fd, data)
+              os.fsync(fd)
+              times.append(time.monotonic() - s)
+          os.close(fd)
+          os.unlink('/tmp/_bench_fsync')
+          avg = sum(times)/len(times)*1000
+          p50 = sorted(times)[50]*1000
+          p99 = sorted(times)[99]*1000
+          print(f'avg={avg:.3f}ms  p50={p50:.3f}ms  p99={p99:.3f}ms')
+          "
+
+          section "Random I/O (4K random write, 1000 ops)"
+          python3 -c "
+          import os, time, random
+          size = 256 * 1024 * 1024  # 256MB file
+          fd = os.open('/tmp/_bench_randio', os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_DIRECT if hasattr(os, 'O_DIRECT') else os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+          os.ftruncate(fd, size)
+          data = b'\x00' * 4096
+          offsets = [random.randint(0, size // 4096 - 1) * 4096 for _ in range(1000)]
+          s = time.monotonic()
+          for off in offsets:
+              os.lseek(fd, off, os.SEEK_SET)
+              os.write(fd, data)
+          os.fsync(fd)
+          elapsed = time.monotonic() - s
+          os.close(fd)
+          os.unlink('/tmp/_bench_randio')
+          print(f'1000 random 4K writes: {elapsed:.3f}s  ({1000/elapsed:.0f} IOPS)')
+          " 2>&1
+
+          # ─── CPU Benchmark ───────────────────────────────────────────────
+          section "CPU benchmark (single-core, sysbench or fallback)"
+          if command -v sysbench &>/dev/null; then
+            sysbench cpu --threads=1 --time=5 run 2>&1
+          else
+            python3 -c "
+          import time, hashlib
+          s = time.monotonic()
+          n = 0
+          while time.monotonic() - s < 5:
+              hashlib.sha256(str(n).encode()).hexdigest()
+              n += 1
+          elapsed = time.monotonic() - s
+          print(f'{n} SHA-256 hashes in {elapsed:.2f}s ({n/elapsed:.0f} ops/sec)')
+          "
+          fi
+
+          section "CPU benchmark (multi-core)"
+          nproc_count=$(nproc)
+          if command -v sysbench &>/dev/null; then
+            sysbench cpu --threads=$nproc_count --time=5 run 2>&1
+          else
+            python3 -c "
+          import time, hashlib, multiprocessing
+          def work(_):
+              s = time.monotonic()
+              n = 0
+              while time.monotonic() - s < 5:
+                  hashlib.sha256(str(n).encode()).hexdigest()
+                  n += 1
+              return n
+          cores = multiprocessing.cpu_count()
+          with multiprocessing.Pool(cores) as p:
+              results = p.map(work, range(cores))
+          total = sum(results)
+          print(f'{total} SHA-256 hashes in 5s across {cores} cores ({total/5:.0f} ops/sec)')
+          "
+          fi
+
+          # ─── Memory Benchmark ────────────────────────────────────────────
+          section "Memory bandwidth (dd 1GB through tmpfs)"
+          dd if=/dev/zero of=/dev/shm/_bench_mem bs=1M count=1024 2>&1
+          dd if=/dev/shm/_bench_mem of=/dev/null bs=1M count=1024 2>&1
+          rm -f /dev/shm/_bench_mem
+
+          # ─── Network Benchmark ───────────────────────────────────────────
+          section "Network download speed (GitHub CDN)"
+          curl -w "speed_download: %{speed_download} bytes/sec\ntime_total: %{time_total}s\nsize_download: %{size_download} bytes\n" \
+            -o /dev/null -sS "https://github.com/cli/cli/releases/download/v2.62.0/gh_2.62.0_linux_amd64.tar.gz" 2>&1 || echo "download test failed"
+
+          section "Network latency"
+          for host in github.com registry.npmjs.org pypi.org api.nuget.org; do
+            echo -n "$host: "
+            curl -o /dev/null -sS -w "%{time_connect}s connect, %{time_starttransfer}s TTFB\n" "https://$host" 2>&1 || echo "unreachable"
+          done
+
+          # ─── System Footprint ─────────────────────────────────────────────
+          section "Process count"
+          ps aux | wc -l
+          echo "By user:"
+          ps aux | awk '{print $1}' | sort | uniq -c | sort -rn
+
+          section "Top processes by memory"
+          ps aux --sort=-%mem | head -20
+
+          section "Top processes by CPU"
+          ps aux --sort=-%cpu | head -20
+
+          section "System uptime and load"
+          uptime
+          cat /proc/loadavg
+
+          section "Disk usage summary"
+          du -sh /home/runner /opt /usr/local /usr/share /var /snap /tmp 2>/dev/null | sort -rh
+          echo "---"
+          echo "Total used on all mounts:"
+          df -h --total 2>/dev/null | tail -1
+
+          section "Inode usage"
+          df -i 2>/dev/null
+
+          section "Memory breakdown"
+          echo "Slab:"
+          cat /proc/meminfo | grep -i slab
+          echo "Buffers/Cached:"
+          cat /proc/meminfo | grep -E 'Buffers|^Cached|SwapCached'
+          echo "Huge pages:"
+          cat /proc/meminfo | grep -i huge
+
+          section "Tmpfs mounts and usage"
+          df -h | grep tmpfs
+
+          section "Open file descriptors (system-wide)"
+          cat /proc/sys/fs/file-nr
+
+          section "Kernel memory (vmstat)"
+          vmstat -s 2>/dev/null | head -20
+
+          section "cgroup limits"
+          echo "Memory limit:"
+          cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo "not found"
+          echo "CPU quota:"
+          cat /sys/fs/cgroup/cpu.max 2>/dev/null || cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null || echo "not found"
+          echo "PIDs limit:"
+          cat /sys/fs/cgroup/pids.max 2>/dev/null || cat /sys/fs/cgroup/pids/pids.max 2>/dev/null || echo "not found"
+
           echo
           echo "=== DUMP COMPLETE ==="
